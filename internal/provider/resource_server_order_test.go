@@ -123,6 +123,29 @@ func TestUnitServerOrderResource_create(t *testing.T) {
 	})
 }
 
+func TestUnitServerOrderResource_timeouts(t *testing.T) {
+	handler, _ := newServerOrderMock()
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: batch2ProviderFactories(ts),
+		Steps: []resource.TestStep{
+			{
+				Config: `resource "hetzner_server_order" "test" {
+					product_id = "12345"
+					timeouts {
+						create = "45m"
+					}
+				}`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("hetzner_server_order.test", "server_number", "999"),
+				),
+			},
+		},
+	})
+}
+
 func TestUnitServerOrderResource_create_with_name(t *testing.T) {
 	handler, mock := newServerOrderMock()
 	ts := httptest.NewServer(handler)

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -41,28 +42,29 @@ type serverOrderResource struct {
 }
 
 type serverOrderResourceModel struct {
-	ProductID                types.String `tfsdk:"product_id"`
-	Source                   types.String `tfsdk:"source"`
-	AuthorizedKeys           types.List   `tfsdk:"authorized_keys"`
-	Addons                   types.List   `tfsdk:"addons"`
-	Location                 types.String `tfsdk:"location"`
-	Dist                     types.String `tfsdk:"dist"`
-	Lang                     types.String `tfsdk:"lang"`
-	Test                     types.Bool   `tfsdk:"test"`
-	TransactionID            types.String `tfsdk:"transaction_id"`
-	ServerNumber             types.Int64  `tfsdk:"server_number"`
-	ServerIP                 types.String `tfsdk:"server_ip"`
-	ServerIPv6               types.String `tfsdk:"server_ipv6_net"`
-	ServerName               types.String `tfsdk:"server_name"`
-	Product                  types.String `tfsdk:"product"`
-	DC                       types.String `tfsdk:"dc"`
-	Traffic                  types.String `tfsdk:"traffic"`
-	Status                   types.String `tfsdk:"status"`
-	Cancelled                types.Bool   `tfsdk:"cancelled"`
-	PaidUntil                types.String `tfsdk:"paid_until"`
-	CancellationDate         types.String `tfsdk:"cancellation_date"`
-	ReserveLocation          types.Bool   `tfsdk:"reserve_location"`
-	EarliestCancellationDate types.String `tfsdk:"earliest_cancellation_date"`
+	ProductID                types.String   `tfsdk:"product_id"`
+	Source                   types.String   `tfsdk:"source"`
+	AuthorizedKeys           types.List     `tfsdk:"authorized_keys"`
+	Addons                   types.List     `tfsdk:"addons"`
+	Location                 types.String   `tfsdk:"location"`
+	Dist                     types.String   `tfsdk:"dist"`
+	Lang                     types.String   `tfsdk:"lang"`
+	Test                     types.Bool     `tfsdk:"test"`
+	TransactionID            types.String   `tfsdk:"transaction_id"`
+	ServerNumber             types.Int64    `tfsdk:"server_number"`
+	ServerIP                 types.String   `tfsdk:"server_ip"`
+	ServerIPv6               types.String   `tfsdk:"server_ipv6_net"`
+	ServerName               types.String   `tfsdk:"server_name"`
+	Product                  types.String   `tfsdk:"product"`
+	DC                       types.String   `tfsdk:"dc"`
+	Traffic                  types.String   `tfsdk:"traffic"`
+	Status                   types.String   `tfsdk:"status"`
+	Cancelled                types.Bool     `tfsdk:"cancelled"`
+	PaidUntil                types.String   `tfsdk:"paid_until"`
+	CancellationDate         types.String   `tfsdk:"cancellation_date"`
+	ReserveLocation          types.Bool     `tfsdk:"reserve_location"`
+	EarliestCancellationDate types.String   `tfsdk:"earliest_cancellation_date"`
+	Timeouts                 timeouts.Value `tfsdk:"timeouts"`
 }
 
 // Server API response types shared across resources and data sources.
@@ -116,6 +118,11 @@ func (r *serverOrderResource) Metadata(ctx context.Context, req resource.Metadat
 func (r *serverOrderResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Orders and manages a Hetzner dedicated server. Supports ordering from the standard catalog or server market (auction), managing the server name and cancellation, and importing existing servers. The server is cancelled on destroy.",
+		Blocks: map[string]schema.Block{
+			"timeouts": timeouts.Block(ctx, timeouts.Opts{
+				Create: true,
+			}),
+		},
 		Attributes: map[string]schema.Attribute{
 			"product_id": schema.StringAttribute{
 				MarkdownDescription: "Product ID to order. Not required when importing an existing server.",
@@ -263,6 +270,12 @@ func (r *serverOrderResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
+	createTimeout, diags := data.Timeouts.Create(ctx, 20*time.Minute)
+	if diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
+	}
+
 	// product_id is required for ordering (but optional in schema for import).
 	if data.ProductID.IsNull() || data.ProductID.ValueString() == "" {
 		resp.Diagnostics.AddError("Missing product_id", "product_id is required when ordering a new server")
@@ -336,7 +349,7 @@ func (r *serverOrderResource) Create(ctx context.Context, req resource.CreateReq
 	if orderResp.Transaction.ServerNumber != nil && *orderResp.Transaction.ServerNumber != 0 {
 		serverNumber = *orderResp.Transaction.ServerNumber
 	} else {
-		sn, diags := r.pollTransactionForServerNumber(ctx, txnPollBase, orderResp.Transaction.ID)
+		sn, diags := r.pollTransactionForServerNumber(ctx, txnPollBase, orderResp.Transaction.ID, createTimeout)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
@@ -557,12 +570,12 @@ func (r *serverOrderResource) revokeCancellation(data *serverOrderResourceModel,
 }
 
 // pollTransactionForServerNumber polls the transaction endpoint until server_number is assigned.
-func (r *serverOrderResource) pollTransactionForServerNumber(ctx context.Context, basePath, txnID string) (int, diag.Diagnostics) {
+func (r *serverOrderResource) pollTransactionForServerNumber(ctx context.Context, basePath, txnID string, createTimeout time.Duration) (int, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
-	deadline := time.After(20 * time.Minute)
+	deadline := time.After(createTimeout)
 
 	for {
 		select {
@@ -570,7 +583,7 @@ func (r *serverOrderResource) pollTransactionForServerNumber(ctx context.Context
 			diags.AddError("Context cancelled", "Timed out waiting for server_number assignment")
 			return 0, diags
 		case <-deadline:
-			diags.AddError("Timeout", fmt.Sprintf("Timed out after 20 minutes waiting for server_number from transaction %s", txnID))
+			diags.AddError("Timeout", fmt.Sprintf("Timed out after %s waiting for server_number from transaction %s", createTimeout, txnID))
 			return 0, diags
 		case <-ticker.C:
 			body, err := r.client.GetWithContext(ctx, fmt.Sprintf("%s/%s", basePath, txnID))

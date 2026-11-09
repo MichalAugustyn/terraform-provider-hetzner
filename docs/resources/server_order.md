@@ -28,6 +28,7 @@ Orders and manages a Hetzner dedicated server. Supports ordering from the standa
 - `server_name` (String) The user-assigned server name.
 - `source` (String) Order source: "market" (auction) or "standard" (catalog). Defaults to "market".
 - `test` (Boolean) Whether this is a test order. Defaults to false.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -42,3 +43,10 @@ Orders and manages a Hetzner dedicated server. Supports ordering from the standa
 - `status` (String) Server status.
 - `traffic` (String) Free traffic quota.
 - `transaction_id` (String) The order transaction ID.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
